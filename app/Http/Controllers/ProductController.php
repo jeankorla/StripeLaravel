@@ -53,7 +53,7 @@ class ProductController extends Controller
     ]);
 }
 
-   public function purchase(Request $request, $productId) {
+  public function purchase(Request $request, $productId) {
     $stripe = new StripeClient(env('STRIPE_SECRET'));
 
     // Recuperando o produto e os preços do Stripe
@@ -61,22 +61,23 @@ class ProductController extends Controller
     $prices = $stripe->prices->all(['product' => $productId]);
     $price = $prices->data[0]->unit_amount;
 
-    // Obter o usuário autenticado e criar ou recuperar o cliente Stripe
-    $user = Auth::user();
-    $stripeCustomer = $user->createOrGetStripeCustomer();
+    $items = [
+        'mode' => 'payment',
+        'success_url' => 'http://seu-site.com/success',
+        'cancel_url' => 'http://seu-site.com/cancel',
+        'line_items' => [[
+            'price_data' => [
+                'currency' => 'usd',
+                'product_data' => ['name' => $product->name],
+                'unit_amount' => $price,
+            ],
+            'quantity' => 1,
+        ]],
+    ];
 
-    // Criar um PaymentIntent para o produto
-    $paymentIntent = $stripe->paymentIntents->create([
-        'amount' => $price,
-        'currency' => 'usd', // ou a moeda que você usa
-        'customer' => $stripeCustomer->id, // Associar o PaymentIntent ao cliente Stripe
-    ]);
+    $checkout_session = $stripe->checkout->sessions->create($items);
 
-    return view('checkout', [
-        'clientSecret' => $paymentIntent->client_secret,
-        'product' => $product,
-        'price' => $price / 100
-    ]);
+    return redirect($checkout_session->url);
 }
 
 
@@ -84,24 +85,31 @@ class ProductController extends Controller
     public function checkout(Request $request)
 {
     $cartItems = session()->get('cart', []);
-    $total = array_reduce($cartItems, function ($carry, $item) {
-        return $carry + $item['price'] * $item['quantity'];
-    }, 0);
+    $items = [
+        'mode' => 'payment',
+        'success_url' => 'http://seu-site.com/success', // Altere para a URL de sucesso
+        'cancel_url' => 'http://seu-site.com/cancel',  // Altere para a URL de cancelamento
+    ];
+
+    foreach ($cartItems as $item) {
+        $items['line_items'][] = [
+            'price_data' => [
+                'currency' => 'brl', // Substitua pela sua moeda se necessário
+                'product_data' => [
+                    'name' => $item['name']
+                ],
+                'unit_amount' => $item['price'] * 100
+            ],
+            'quantity' => $item['quantity']
+        ];
+    }
 
     $stripe = new StripeClient(env('STRIPE_SECRET'));
+    $checkout_session = $stripe->checkout->sessions->create($items);
 
-    $paymentIntent = $stripe->paymentIntents->create([
-        'amount' => $total * 100, // Stripe espera o valor em centavos
-        'currency' => 'usd', // Substitua pela sua moeda se necessário
-        // Você pode adicionar mais configurações conforme necessário
-    ]);
-
-    return view('checkout', [
-        'clientSecret' => $paymentIntent->client_secret,
-        'cartItems' => $cartItems,
-        'total' => $total
-    ]);
+    return redirect($checkout_session->url);
 }
+
 
 public function processPayment(Request $request)
 {
